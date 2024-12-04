@@ -4,7 +4,6 @@
 (impl-trait 'SP2PABAF9FTAJYNFZH93XENAJ8FVY99RRM50D2JG9.nft-trait.nft-trait)
 
 (define-non-fungible-token welsh-stone uint)
-
 ;; Constants
 (define-constant DEPLOYER tx-sender)
 (define-constant COMM u1000)
@@ -29,7 +28,7 @@
 ;; Internal variables
 (define-data-var mint-limit uint u500) ;; limit for minting anything
 (define-data-var last-id uint u1) 
-(define-data-var total-price uint u6900000) ;; TODO
+(define-data-var total-price uint u6900000) ;; 
 (define-data-var artist-address principal 'SPQ5CEHETP8K4Q2FSNNK9ANMPAVBSA9NN86YSN59)
 ;; where all the metada of the collection is being stored
 (define-data-var ipfs-root (string-ascii 80) "ipfs://ipfs/QmUatY92q2hmUrkSksD3C5ATU1RG79uNmB9vPvPxypJgtA/json/")
@@ -85,9 +84,9 @@
                                                             ;; id-reached is the amount of nfts created all the way to this point
       (price (* (var-get total-price) (- id-reached last-nft-id)))
                                         ;; (- id-reached last-nft-id) is the amount of nfts created at this instance
-      (total-commission (/ (* price COMM) u10000))
+      (total-commission (/ (* price COMM) u10000)) ;; since COMM is 1000 this is like taking the 10% of the price
                                         ;; this is the comission for the smart-contract?
-      (current-balance (get-balance tx-sender))
+      (current-balance (get-balance tx-sender)) ;; get the amount of nfts that the sender of the transaction has
       (total-artist (- price total-commission))
                                         ;; this is the amount of money that will be bided to the artist
       (capped (> (var-get mint-cap) u0))
@@ -116,16 +115,16 @@
             ;;; if the sender is the artist or if it's the deployer or if the price is free
       (begin
         (var-set last-id id-reached)                                                    ;; update the last-id reached
-        (map-set token-count tx-sender (+ current-balance (- id-reached last-nft-id)))  ;; 
+        (map-set token-count tx-sender (+ current-balance (- id-reached last-nft-id)))  ;; update the amount of tokens that the tx-sender has 
       )
       (begin
-        (var-set last-id id-reached)
-        (map-set token-count tx-sender (+ current-balance (- id-reached last-nft-id)))
-        (try! (stx-transfer? total-artist tx-sender (var-get artist-address)))
-        (try! (stx-transfer? total-commission tx-sender COMM-ADDR))
+        (var-set last-id id-reached)  ;; update the last id
+        (map-set token-count tx-sender (+ current-balance (- id-reached last-nft-id)))  ;; update the amount of minted tokens
+        (try! (stx-transfer? total-artist tx-sender (var-get artist-address)))          ;; transfer the total amount of money to the artist
+        (try! (stx-transfer? total-commission tx-sender COMM-ADDR))                     ;; transfer the total amount of money to the commission address
       )    
     )
-    (ok id-reached)))
+    (ok id-reached))) ;; return the id reached
 
 (define-private (mint-many-iter (ignore bool) (next-id uint))   ;; actual function to mint but as many times as the orders array state
                                                                 ;; ignore argument doesn't do anything
@@ -141,26 +140,28 @@
 
 (define-public (set-artist-address (address principal))
   (begin
+      ;; returns true if the sender of the transaction is the artist or the deployer, otherwise returns ERR-INVALID-USER
     (asserts! (or (is-eq tx-sender (var-get artist-address)) (is-eq tx-sender DEPLOYER)) (err ERR-INVALID-USER))
+      ;; update the artist address
     (ok (var-set artist-address address))))
 
-(define-public (set-price (price uint))
+(define-public (set-price (price uint)) ;; function to set the price of the nft
   (begin
-    (asserts! (or (is-eq tx-sender (var-get artist-address)) (is-eq tx-sender DEPLOYER)) (err ERR-INVALID-USER))
-    (ok (var-set total-price price))))
+    (asserts! (or (is-eq tx-sender (var-get artist-address)) (is-eq tx-sender DEPLOYER)) (err ERR-INVALID-USER)) ;; validate user
+    (ok (var-set total-price price)))) ;; renew the total-price variable
 
-(define-public (toggle-pause)
+(define-public (toggle-pause) ;; toggle mint-paused variable
   (begin
     (asserts! (or (is-eq tx-sender (var-get artist-address)) (is-eq tx-sender DEPLOYER)) (err ERR-INVALID-USER))
     (ok (var-set mint-paused (not (var-get mint-paused))))))
 
-(define-public (set-mint-limit (limit uint))
+(define-public (set-mint-limit (limit uint)) ;; set the limit of minted tokens
   (begin
-    (asserts! (or (is-eq tx-sender (var-get artist-address)) (is-eq tx-sender DEPLOYER)) (err ERR-INVALID-USER))
-    (asserts! (< limit (var-get mint-limit)) (err ERR-MINT-LIMIT))
-    (ok (var-set mint-limit limit))))
+    (asserts! (or (is-eq tx-sender (var-get artist-address)) (is-eq tx-sender DEPLOYER)) (err ERR-INVALID-USER))  ;; verify tx-sender
+    (asserts! (< limit (var-get mint-limit)) (err ERR-MINT-LIMIT))                                                ;; not update if the values is lesser than the one there was before
+    (ok (var-set mint-limit limit)))) ;; update the variable
 
-(define-public (burn (token-id uint))
+(define-public (burn (token-id uint)) ;; burn the token of certain id
   (begin 
     (asserts! (is-owner token-id tx-sender) (err ERR-NOT-AUTHORIZED))
     (asserts! (is-none (map-get? market token-id)) (err ERR-LISTING))
@@ -184,10 +185,10 @@
     (ok true)))
 
     ;; Non-custodial SIP-009 transfer function
-(define-public (transfer (id uint) (sender principal) (recipient principal))
+(define-public (transfer (id uint) (sender principal) (recipient principal)) ;; function to asure that the is the one passed as argument
   (begin
-    (asserts! (is-eq tx-sender sender) (err ERR-NOT-AUTHORIZED))
-    (asserts! (is-none (map-get? market id)) (err ERR-LISTING))
+    (asserts! (is-eq tx-sender sender) (err ERR-NOT-AUTHORIZED))  ;; non authorized user
+    (asserts! (is-none (map-get? market id)) (err ERR-LISTING))   ;; the token is not listed
     (trnsfr id sender recipient)))
 
 
@@ -242,24 +243,25 @@
 (define-map token-count principal uint)
 (define-map market uint {price: uint, commission: principal, royalty: uint})
 
-(define-read-only (get-balance (account principal))
+(define-read-only (get-balance (account principal)) ;; retrieves the amount of tokens that a principal has
   (default-to u0
     (map-get? token-count account)))
 
-(define-private (trnsfr (id uint) (sender principal) (recipient principal))
-  (match (nft-transfer? welsh-stone id sender recipient)
-    success
+(define-private (trnsfr (id uint) (sender principal) (recipient principal)) ;; actual transfer function
+  (match (nft-transfer? welsh-stone id sender recipient)                    ;; <input ok-binding-name ok-branch err-binding-name err-branch>
+    success ;; this is where the input is saved in case of ok response
       (let
-        ((sender-balance (get-balance sender))
-        (recipient-balance (get-balance recipient)))
+        ((sender-balance (get-balance sender))          ;; amount of tokens that the sender has
+        (recipient-balance (get-balance recipient)))    ;; amount of tokens that the recipient has
           (map-set token-count
-            sender
+            sender ;; sender has one less token
             (- sender-balance u1))
           (map-set token-count
-            recipient
+            recipient ;; recipent has one more token
             (+ recipient-balance u1))
           (ok success))
-    error (err error)))
+    error ;; this is where the input is saved in case of error
+      (err error)))
 
 (define-private (is-sender-owner (id uint))
   (let ((owner (unwrap! (nft-get-owner? welsh-stone id) false)))
