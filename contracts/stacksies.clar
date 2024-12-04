@@ -27,11 +27,11 @@
 (define-constant ERR-INVALID-PERCENTAGE u114)
 
 ;; Internal variables
-(define-data-var mint-limit uint u500)
-(define-data-var last-id uint u1)
-(define-data-var total-price uint u6900000)
+(define-data-var mint-limit uint u500) ;; limit for minting anything
+(define-data-var last-id uint u1) 
+(define-data-var total-price uint u6900000) ;; TODO
 (define-data-var artist-address principal 'SPQ5CEHETP8K4Q2FSNNK9ANMPAVBSA9NN86YSN59)
-    ;; root on which ipfs is saved?
+;; where all the metada of the collection is being stored
 (define-data-var ipfs-root (string-ascii 80) "ipfs://ipfs/QmUatY92q2hmUrkSksD3C5ATU1RG79uNmB9vPvPxypJgtA/json/")
 (define-data-var mint-paused bool false)
 (define-data-var premint-enabled bool false)
@@ -75,26 +75,48 @@
   (mint-many orders))
 
 (define-private (mint-many (orders (list 25 bool )))  
-  (let 
+  (let ;; open a local scope for local variables
     (
-      (last-nft-id (var-get last-id))
-      (enabled (asserts! (<= last-nft-id (var-get mint-limit)) (err ERR-NO-MORE-NFTS)))
-      (art-addr (var-get artist-address))
-      (id-reached (fold mint-many-iter orders last-nft-id))
+      (last-nft-id (var-get last-id)) ;; retrieve the last identifier
+      (enabled (asserts! (<= last-nft-id (var-get mint-limit)) (err ERR-NO-MORE-NFTS))) ;; verifies that there are no more mints than permitted
+      (art-addr (var-get artist-address)) ;; get the address of the artist
+      (id-reached (fold mint-many-iter orders last-nft-id)) ;; <func sequence initial value> <-- this is like a for of length "orders" 
+                                                            ;; it's like a for for creating nfts
+                                                            ;; id-reached is the amount of nfts created all the way to this point
       (price (* (var-get total-price) (- id-reached last-nft-id)))
+                                        ;; (- id-reached last-nft-id) is the amount of nfts created at this instance
       (total-commission (/ (* price COMM) u10000))
+                                        ;; this is the comission for the smart-contract?
       (current-balance (get-balance tx-sender))
       (total-artist (- price total-commission))
+                                        ;; this is the amount of money that will be bided to the artist
       (capped (> (var-get mint-cap) u0))
+                                        ;; verify that the minting process is inside a certain time frame
       (user-mints (get-mints tx-sender))
+                                        ;; get the amount of mints done by the sender of the transaction
     )
-    (asserts! (or (is-eq false (var-get mint-paused)) (is-eq tx-sender DEPLOYER)) (err ERR-PAUSED))
-    (asserts! (or (not capped) (is-eq tx-sender DEPLOYER) (is-eq tx-sender art-addr) (>= (var-get mint-cap) (+ (len orders) user-mints))) (err ERR-NO-MORE-MINTS))
-    (map-set mints-per-user tx-sender (+ (len orders) user-mints))
+    (asserts! 
+        (or 
+            (is-eq false (var-get mint-paused)) ;; process of minting was not paussed
+            (is-eq tx-sender DEPLOYER)          ;; the sender of the transaction must be the owner of the smart contract
+        ) 
+        (err ERR-PAUSED)                        ;; ortherwise return ERR-PAUSED
+    )
+    (asserts! 
+        (or 
+            (not capped)                        ;; time-frame limit has not been met
+            (is-eq tx-sender DEPLOYER)          ;; the sender of the transaction is the deployer
+            (is-eq tx-sender art-addr)          ;; verifying that the sender of the transaction is the artist
+            (>= (var-get mint-cap) (+ (len orders) user-mints) ) ;; verifying that the user doesn't suprass the limit of feasible generated tokens by the user
+        ) 
+        (err ERR-NO-MORE-MINTS)                 ;; of all the prior fails it is becuase it's not possible no make more mints
+    )
+    (map-set mints-per-user tx-sender (+ (len orders) user-mints)) ;; add the amount of nfts generated to the user register in the map
     (if (or (is-eq tx-sender art-addr) (is-eq tx-sender DEPLOYER) (is-eq (var-get total-price) u0000000))
+            ;;; if the sender is the artist or if it's the deployer or if the price is free
       (begin
-        (var-set last-id id-reached)
-        (map-set token-count tx-sender (+ current-balance (- id-reached last-nft-id)))
+        (var-set last-id id-reached)                                                    ;; update the last-id reached
+        (map-set token-count tx-sender (+ current-balance (- id-reached last-nft-id)))  ;; 
       )
       (begin
         (var-set last-id id-reached)
@@ -105,13 +127,17 @@
     )
     (ok id-reached)))
 
-(define-private (mint-many-iter (ignore bool) (next-id uint))
-  (if (<= next-id (var-get mint-limit))
-    (begin
-      (unwrap! (nft-mint? welsh-stone next-id tx-sender) next-id)
-      (+ next-id u1)    
+(define-private (mint-many-iter (ignore bool) (next-id uint))   ;; actual function to mint but as many times as the orders array state
+                                                                ;; ignore argument doesn't do anything
+  (if (<= next-id (var-get mint-limit)) ;; if there are less nfts than the limit we settled
+    (begin ;; NB: it will return the last expression
+            ;; NB: type (response ok-type err-type) <- i    
+      (unwrap! (nft-mint? welsh-stone next-id tx-sender) next-id) ;; unwraps the boolean that nft-mint? returned (overmore this last operation creates a welsh-stone <class> with id next-id <uint> and bids it to the wallet that sent the transaction)
+        ;; in case that the nft-mint returned an error, or what is the same: there's already a token with that id
+      (+ next-id u1) ;; increase next-id <- this is what is being yielded by the private function
     )
-    next-id))
+    next-id) ;; if the limit of nfts has been reached
+)
 
 (define-public (set-artist-address (address principal))
   (begin
@@ -157,12 +183,13 @@
     (var-set metadata-frozen true)
     (ok true)))
 
-;; Non-custodial SIP-009 transfer function
+    ;; Non-custodial SIP-009 transfer function
 (define-public (transfer (id uint) (sender principal) (recipient principal))
   (begin
     (asserts! (is-eq tx-sender sender) (err ERR-NOT-AUTHORIZED))
     (asserts! (is-none (map-get? market id)) (err ERR-LISTING))
     (trnsfr id sender recipient)))
+
 
 ;; read-only functions
 (define-read-only (get-owner (token-id uint))
@@ -171,6 +198,7 @@
 (define-read-only (get-last-token-id)
   (ok (- (var-get last-id) u1)))
 
+;; here is where the metadata is "assigned"
 (define-read-only (get-token-uri (token-id uint))
   (ok (some (concat (concat (var-get ipfs-root) "{id}") ".json"))))
 
@@ -184,7 +212,7 @@
   (ok (var-get artist-address)))
 
 (define-read-only (get-mints (caller principal))
-  (default-to u0 (map-get? mints-per-user caller)))
+  (default-to u0 (map-get? mints-per-user caller))) ;; retrieves the amount of mints done by a single address
 
 (define-read-only (get-mint-limit)
   (ok (var-get mint-limit)))
