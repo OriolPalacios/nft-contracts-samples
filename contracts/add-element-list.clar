@@ -17,6 +17,6 @@
       (begin (var-set my-list new-list) (print last-index))
       (print u101)
     )
-    (var-set my-list-last-ind ex (+ last-index u1))
+    (var-set my-list-last-index (+ last-index u1))
     (ok (var-get my-list))
   )
